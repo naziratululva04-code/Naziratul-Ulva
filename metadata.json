@@ -1,0 +1,6 @@
+{
+  "name": "Undangan Pernikahan Bento",
+  "description": "Undangan pernikahan digital interaktif bertema Bento Grid dengan fitur RSVP, sinkronisasi kalender, kado digital, dan personalisasi musik/foto langsung.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

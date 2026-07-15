@@ -28,7 +28,8 @@ import {
   Pause,
   ChevronRight,
   Sparkles,
-  Award
+  Award,
+  FileText
 } from 'lucide-react';
 
 // Interfaces
@@ -83,13 +84,23 @@ const SONG_PRESETS = [
   },
   {
     id: 'acoustic',
-    name: 'Acoustic Guitar Breeze',
+    name: 'Acoustic Guitar Sweet Breeze',
     url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3'
+  },
+  {
+    id: 'violin',
+    name: 'Romantic Violin & Soft Piano',
+    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3'
   },
   {
     id: 'lounge',
     name: 'Beautiful Lounge Symphony',
     url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3'
+  },
+  {
+    id: 'orchestral',
+    name: 'Classical Romance Symphony',
+    url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3'
   }
 ];
 
@@ -131,21 +142,21 @@ const DEFAULT_WISHES: Wish[] = [
 
 export default function App() {
   // --- INVITATION STATES (Editable / Personalizable) ---
-  const [groom, setGroom] = useState('Aditiya');
-  const [groomFull, setGroomFull] = useState('Aditiya Pratama, S.T.');
-  const [groomParents, setGroomParents] = useState('Putra dari Bpk. Bambang Pratama & Ibu Rina Pratama');
+  const [groom, setGroom] = useState('Juanda');
+  const [groomFull, setGroomFull] = useState('Juanda, S.T');
+  const [groomParents, setGroomParents] = useState('Putra dari Bapak Budi');
   
-  const [bride, setBride] = useState('Kirana');
-  const [brideFull, setBrideFull] = useState('Kirana Larasati, S.I.Kom.');
-  const [brideParents, setBrideParents] = useState('Putri dari Bpk. Hendra Larasati & Ibu Shinta Larasati');
+  const [bride, setBride] = useState('Mutia');
+  const [brideFull, setBrideFull] = useState('Mutia Fahrina, S.Pd.');
+  const [brideParents, setBrideParents] = useState('Putri dari Bapak Bahagia');
 
   const [date, setDate] = useState('2026-07-25');
   const [time, setTime] = useState('10:00');
   const [timezone, setTimezone] = useState('WIB');
   
-  const [locationName, setLocationName] = useState('Plataran Dharmawangsa');
-  const [locationAddress, setLocationAddress] = useState('Jl. Dharmawangsa Raya No.6, Kebayoran Baru, Jakarta Selatan');
-  const [mapsUrl, setMapsUrl] = useState('https://maps.google.com/?q=Plataran+Dharmawangsa+Jakarta');
+  const [locationName, setLocationName] = useState('Gedung Pernikahan');
+  const [locationAddress, setLocationAddress] = useState('Jl. Syiah Kuala, Kecamatan Kuta Alam, Kota Banda Aceh');
+  const [mapsUrl, setMapsUrl] = useState('https://maps.google.com/?q=Jl.+Syiah+Kuala,+Kecamatan+Kuta+Alam,+Kota+Banda+Aceh');
 
   const [bgPhoto, setBgPhoto] = useState(PHOTO_PRESETS[0].url);
   const [songPresetKey, setSongPresetKey] = useState('canon');
@@ -170,6 +181,8 @@ export default function App() {
   const [hasCover, setHasCover] = useState(true); // Gate page open by default
   const [isCustomizerOpen, setIsCustomizerOpen] = useState(true); // Left side editor panel
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isGuideOpen, setIsGuideOpen] = useState(false); // Collapsible Apps Script guide
+  const [isMusicGuideOpen, setIsMusicGuideOpen] = useState(false); // Collapsible music guide
   
   // Custom Share Tool States
   const [copiedText, setCopiedText] = useState<{ [key: string]: boolean }>({});
@@ -182,9 +195,195 @@ export default function App() {
   const [formGuests, setFormGuests] = useState(1);
   const [formMessage, setFormMessage] = useState('');
   const [rsvpFeedback, setRsvpFeedback] = useState<string | null>(null);
+  const [rsvpSending, setRsvpSending] = useState(false);
+  const [rsvpSendError, setRsvpSendError] = useState<string | null>(null);
 
   // Audio Ref
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // --- API STATE VARIABLES ---
+  const [readApiUrl, setReadApiUrl] = useState(() => localStorage.getItem('wedding_read_api_url') || 'https://script.google.com/macros/s/AKfycbzIJtChV0WYu68vZT40x0ohhfpWaIbbJBr6-SKNuf0P978E9pb2oEF63vmKQAmi3nsO/exec');
+  const [writeApiUrl, setWriteApiUrl] = useState(() => localStorage.getItem('wedding_write_api_url') || 'https://script.google.com/macros/s/AKfycbzIJtChV0WYu68vZT40x0ohhfpWaIbbJBr6-SKNuf0P978E9pb2oEF63vmKQAmi3nsO/exec');
+
+  const updateReadApiUrl = (val: string) => {
+    setReadApiUrl(val);
+    localStorage.setItem('wedding_read_api_url', val);
+  };
+
+  const updateWriteApiUrl = (val: string) => {
+    setWriteApiUrl(val);
+    localStorage.setItem('wedding_write_api_url', val);
+  };
+  const [apiLoading, setApiLoading] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [apiSuccessMessage, setApiSuccessMessage] = useState<string | null>(null);
+
+  const fetchRsvpsAndWishes = async () => {
+    if (!writeApiUrl) return;
+    try {
+      const response = await fetch(writeApiUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const json = await response.json();
+      if (json.status === 'success' && Array.isArray(json.data)) {
+        const parsedWishes: Wish[] = [];
+        const parsedRsvps: RSVPRecord[] = [];
+
+        json.data.forEach((row: any, index: number) => {
+          const findValue = (keys: string[]) => {
+            for (const key of keys) {
+              for (const k of Object.keys(row)) {
+                if (k.toLowerCase().trim() === key.toLowerCase().trim()) {
+                  return row[k];
+                }
+              }
+            }
+            return undefined;
+          };
+
+          const name = String(findValue(['nama tamu', 'nama_tamu', 'nama', 'name', 'nama lengkap']) || 'Anonim').trim();
+          const rawStatus = String(findValue(['kehadiran', 'status', 'status kehadiran']) || 'Hadir').trim();
+          const status: 'Hadir' | 'Tidak Hadir' | 'Ragu-ragu' = 
+            rawStatus.toLowerCase().includes('tidak') ? 'Tidak Hadir' : 
+            rawStatus.toLowerCase().includes('ragu') ? 'Ragu-ragu' : 'Hadir';
+
+          const guestsCount = parseInt(String(findValue(['jumlah tamu', 'jumlah_tamu', 'guests', 'jumlah'])) || '1', 10) || 1;
+          const message = String(findValue(['ucapan & doa', 'ucapan', 'wishes', 'message', 'doa restu', 'ucapan atau doa restu']) || '').trim();
+          
+          const rawTime = findValue(['tanggal submit', 'tanggal_submit', 'timestamp', 'tanggal']);
+          let timestamp = 'Baru saja';
+          if (rawTime) {
+            timestamp = String(rawTime);
+          }
+
+          const id = `sheet-${index}-${Date.now()}`;
+
+          if (message) {
+            parsedWishes.push({
+              id: 'w-' + id,
+              name,
+              status,
+              message,
+              timestamp,
+              likes: 0
+            });
+          }
+
+          parsedRsvps.push({
+            id: 'r-' + id,
+            name,
+            status,
+            guestsCount,
+            wishes: message,
+            timestamp
+          });
+        });
+
+        parsedWishes.reverse();
+        parsedRsvps.reverse();
+
+        if (parsedWishes.length > 0) {
+          setWishes(parsedWishes);
+          localStorage.setItem('wedding_wishes_key', JSON.stringify(parsedWishes));
+        }
+        
+        if (parsedRsvps.length > 0) {
+          setRsvps(parsedRsvps);
+          localStorage.setItem('wedding_rsvps_key', JSON.stringify(parsedRsvps));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch RSVPs from Google Sheets:', err);
+    }
+  };
+
+  const fetchWeddingData = async () => {
+    if (!readApiUrl) {
+      setApiError('URL API Membaca Data kosong.');
+      return;
+    }
+    setApiLoading(true);
+    setApiError(null);
+    try {
+      const response = await fetch(readApiUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const json = await response.json();
+      if (json.status === 'success' && json.data && json.data.length > 0) {
+        const d = json.data[0];
+        
+        // Map groom
+        if (d["nama pengantin pria"]) {
+          const full = d["nama pengantin pria"];
+          setGroomFull(full);
+          const short = full.split(' ')[0] || full;
+          setGroom(short);
+        }
+        
+        // Map bride
+        if (d["nama pengantin wanita"]) {
+          const full = d["nama pengantin wanita"];
+          setBrideFull(full);
+          const short = full.split(' ')[0] || full;
+          setBride(short);
+        }
+        
+        // Map parents
+        if (d["Nama ortu pengantin pria "]) {
+          setGroomParents(d["Nama ortu pengantin pria "]);
+        }
+        if (d["nama ortu pengantin wanita"]) {
+          setBrideParents(d["nama ortu pengantin wanita"]);
+        }
+        
+        // Map location
+        if (d["Lokasi pesta"]) {
+          setLocationName(d["Lokasi pesta"]);
+        }
+        
+        // Map date & time: "25/07/2026 : 10:00 wib"
+        if (d["Tanggal pesta"]) {
+          const raw = d["Tanggal pesta"];
+          
+          // Match date format DD/MM/YYYY
+          const dateMatch = raw.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+          if (dateMatch) {
+            const day = dateMatch[1];
+            const month = dateMatch[2];
+            const year = dateMatch[3];
+            setDate(`${year}-${month}-${day}`); // ISO YYYY-MM-DD
+          }
+          
+          // Match time format HH:MM
+          const timeMatch = raw.match(/(\d{2}):(\d{2})/);
+          if (timeMatch) {
+            setTime(`${timeMatch[1]}:${timeMatch[2]}`);
+          }
+          
+          // Match timezone
+          if (raw.toLowerCase().includes('wib')) {
+            setTimezone('WIB');
+          } else if (raw.toLowerCase().includes('wita')) {
+            setTimezone('WITA');
+          } else if (raw.toLowerCase().includes('wit')) {
+            setTimezone('WIT');
+          }
+        }
+        
+        setApiSuccessMessage('Data pernikahan berhasil disinkronkan langsung dari Google Sheets!');
+        setTimeout(() => setApiSuccessMessage(null), 5000);
+      } else {
+        throw new Error('Format data tidak valid dari server.');
+      }
+    } catch (err: any) {
+      console.error('Failed to fetch wedding data:', err);
+      setApiError('Gagal mengunduh data otomatis: ' + err.message);
+    } finally {
+      setApiLoading(false);
+    }
+  };
 
   // --- PARSE INITIAL PARAMETERS ---
   useEffect(() => {
@@ -195,29 +394,35 @@ export default function App() {
       setFormName(toParam);
     }
 
-    if (params.get('groom')) setGroom(params.get('groom')!);
-    if (params.get('bride')) setBride(params.get('bride')!);
-    if (params.get('groomFull')) setGroomFull(params.get('groomFull')!);
-    if (params.get('brideFull')) setBrideFull(params.get('brideFull')!);
-    if (params.get('groomParents')) setGroomParents(params.get('groomParents')!);
-    if (params.get('brideParents')) setBrideParents(params.get('brideParents')!);
-    if (params.get('date')) setDate(params.get('date')!);
-    if (params.get('time')) setTime(params.get('time')!);
-    if (params.get('timezone')) setTimezone(params.get('timezone')!);
-    if (params.get('locationName')) setLocationName(params.get('locationName')!);
-    if (params.get('locationAddress')) setLocationAddress(params.get('locationAddress')!);
-    if (params.get('mapsUrl')) setMapsUrl(params.get('mapsUrl')!);
-    if (params.get('bgPhoto')) setBgPhoto(params.get('bgPhoto')!);
-    if (params.get('song')) setSongPresetKey(params.get('song')!);
-    if (params.get('customSong')) setCustomSongUrl(params.get('customSong')!);
-    if (params.get('quote')) setQuote(params.get('quote')!);
-    
-    if (params.get('bank1')) setBank1Name(params.get('bank1')!);
-    if (params.get('norek1')) setBank1Number(params.get('norek1')!);
-    if (params.get('an1')) setBank1Holder(params.get('an1')!);
-    if (params.get('bank2')) setBank2Name(params.get('bank2')!);
-    if (params.get('norek2')) setBank2Number(params.get('norek2')!);
-    if (params.get('an2')) setBank2Holder(params.get('an2')!);
+    // Prioritize URL query parameters if they are explicitly passed, otherwise fetch from Google Apps Script
+    const hasOverride = params.get('groom') || params.get('bride') || params.get('date');
+    if (!hasOverride) {
+      fetchWeddingData();
+    } else {
+      if (params.get('groom')) setGroom(params.get('groom')!);
+      if (params.get('bride')) setBride(params.get('bride')!);
+      if (params.get('groomFull')) setGroomFull(params.get('groomFull')!);
+      if (params.get('brideFull')) setBrideFull(params.get('brideFull')!);
+      if (params.get('groomParents')) setGroomParents(params.get('groomParents')!);
+      if (params.get('brideParents')) setBrideParents(params.get('brideParents')!);
+      if (params.get('date')) setDate(params.get('date')!);
+      if (params.get('time')) setTime(params.get('time')!);
+      if (params.get('timezone')) setTimezone(params.get('timezone')!);
+      if (params.get('locationName')) setLocationName(params.get('locationName')!);
+      if (params.get('locationAddress')) setLocationAddress(params.get('locationAddress')!);
+      if (params.get('mapsUrl')) setMapsUrl(params.get('mapsUrl')!);
+      if (params.get('bgPhoto')) setBgPhoto(params.get('bgPhoto')!);
+      if (params.get('song')) setSongPresetKey(params.get('song')!);
+      if (params.get('customSong')) setCustomSongUrl(params.get('customSong')!);
+      if (params.get('quote')) setQuote(params.get('quote')!);
+      
+      if (params.get('bank1')) setBank1Name(params.get('bank1')!);
+      if (params.get('norek1')) setBank1Number(params.get('norek1')!);
+      if (params.get('an1')) setBank1Holder(params.get('an1')!);
+      if (params.get('bank2')) setBank2Name(params.get('bank2')!);
+      if (params.get('norek2')) setBank2Number(params.get('norek2')!);
+      if (params.get('an2')) setBank2Holder(params.get('an2')!);
+    }
 
     // Load customizer initial open/close state based on if they are visiting a guest link
     if (toParam) {
@@ -247,6 +452,9 @@ export default function App() {
         setRsvps(JSON.parse(savedRsvps));
       } catch (e) {}
     }
+
+    // Live background sync from Google Sheets
+    fetchRsvpsAndWishes();
   }, []);
 
   // --- RE-CALCULATE LIVE GUEST LINK ---
@@ -410,18 +618,23 @@ export default function App() {
   };
 
   // --- FORM RSVP SUBMIT ---
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formName.trim()) {
       alert('Silakan masukkan nama Anda.');
       return;
     }
 
+    setRsvpSending(true);
+    setRsvpSendError(null);
+
+    const messageContent = formMessage.trim() || 'Selamat untuk Aditiya & Kirana!';
+
     const newWish: Wish = {
       id: 'w-user-' + Date.now(),
       name: formName,
       status: formStatus,
-      message: formMessage.trim() || 'Selamat untuk Aditiya & Kirana!',
+      message: messageContent,
       timestamp: 'Baru saja',
       likes: 0
     };
@@ -431,26 +644,61 @@ export default function App() {
       name: formName,
       status: formStatus,
       guestsCount: formGuests,
-      wishes: formMessage.trim(),
+      wishes: messageContent,
       timestamp: new Date().toLocaleString('id-ID')
     };
 
-    // Update wishes list
+    // Update local wishes list first so it appears immediately on-screen
     const updatedWishes = [newWish, ...wishes];
     setWishes(updatedWishes);
     localStorage.setItem('wedding_wishes_key', JSON.stringify(updatedWishes));
 
-    // Update RSVP records list
+    // Update RSVP records list locally
     const updatedRsvps = [newRsvp, ...rsvps];
     setRsvps(updatedRsvps);
     localStorage.setItem('wedding_rsvps_key', JSON.stringify(updatedRsvps));
 
-    // Feedback message
-    setRsvpFeedback('Terima kasih! Konfirmasi kehadiran Anda telah tersimpan dengan indah.');
-    setFormMessage('');
-    setTimeout(() => {
-      setRsvpFeedback(null);
-    }, 4500);
+    // Build query parameters for Google Apps Script Web App
+    const params = new URLSearchParams();
+    params.set('nama', formName);
+    params.set('kehadiran', formStatus);
+    params.set('jumlah_tamu', String(formGuests));
+    params.set('ucapan', messageContent);
+    // English compatibility params just in case their script expects them
+    params.set('name', formName);
+    params.set('status', formStatus);
+    params.set('guests', String(formGuests));
+    params.set('message', messageContent);
+
+    const sheetApiUrl = writeApiUrl ? `${writeApiUrl}${writeApiUrl.includes('?') ? '&' : '?'}${params.toString()}` : '';
+
+    try {
+      if (sheetApiUrl) {
+        // Use no-cors mode as Apps Script returns standard 302 redirects which trigger preflight issues in standard mode
+        await fetch(sheetApiUrl, {
+          method: 'GET',
+          mode: 'no-cors',
+        });
+        setRsvpFeedback('Terima kasih! Konfirmasi kehadiran Anda telah dikirim dan tersimpan dengan indah di Google Sheets.');
+      } else {
+        setRsvpFeedback('Terima kasih! RSVP Anda telah disimpan secara lokal (URL API Menyimpan RSVP belum diatur).');
+      }
+      setFormMessage('');
+      // Refresh the list of RSVPs/wishes from Google Sheets after a short delay
+      setTimeout(() => {
+        fetchRsvpsAndWishes();
+      }, 1500);
+    } catch (err: any) {
+      console.error('Failed to submit RSVP to Apps Script:', err);
+      setRsvpSendError('Gagal mengirim ke Google Sheets secara langsung, tetapi data tersimpan secara lokal.');
+      setRsvpFeedback('Terima kasih! RSVP Anda telah disimpan secara lokal.');
+    } finally {
+      setRsvpSending(false);
+      setTimeout(() => {
+        setRsvpFeedback(null);
+        setRsvpSendError(null);
+      }, 5000);
+    }
   };
 
   const handleLikeWish = (wishId: string) => {
@@ -566,6 +814,236 @@ export default function App() {
           {/* Form Fields */}
           <div className="p-6 space-y-6">
             
+            {/* Google Sheets Live Database Connection */}
+            <div className="bg-[#4a5d4e]/5 p-5 rounded-3xl border border-[#4a5d4e]/15 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] uppercase tracking-widest font-bold text-[#4a5d4e] flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-[#c5a059] animate-pulse" /> Google Sheets Cloud API
+                </span>
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[8px] font-bold uppercase ${
+                  apiLoading ? 'bg-amber-100 text-amber-800 animate-pulse' :
+                  apiError ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+                }`}>
+                  {apiLoading ? 'Menghubungkan' : apiError ? 'Gagal' : 'Tersinkron'}
+                </span>
+              </div>
+
+              <p className="text-[10px] text-[#5a6356] leading-normal">
+                Koneksi dua-arah langsung dengan Spreadsheet Anda untuk memuat data pengantin secara dinamis dan merekam RSVP tamu secara real-time.
+              </p>
+
+              {/* Dynamic Inputs for API URLs */}
+              <div className="space-y-3 pt-1">
+                <div>
+                  <label className="block text-[9px] font-bold text-[#4a5d4e] uppercase mb-1 flex items-center gap-1">
+                    <span>1. URL API Membaca Data</span>
+                    <span className="text-gray-400 font-normal lowercase">(GET)</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    value={readApiUrl} 
+                    onChange={(e) => updateReadApiUrl(e.target.value)}
+                    placeholder="https://script.google.com/.../exec"
+                    className="w-full text-[10px] px-2.5 py-1.5 bg-white border border-[#e5e1da] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#c5a059] font-mono text-gray-600 truncate"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-bold text-[#4a5d4e] uppercase mb-1 flex items-center gap-1">
+                    <span>2. URL API Menyimpan RSVP</span>
+                    <span className="text-gray-400 font-normal lowercase">(GET/POST)</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    value={writeApiUrl} 
+                    onChange={(e) => updateWriteApiUrl(e.target.value)}
+                    placeholder="https://script.google.com/.../exec"
+                    className="w-full text-[10px] px-2.5 py-1.5 bg-white border border-[#e5e1da] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#c5a059] font-mono text-gray-600 truncate"
+                  />
+                </div>
+              </div>
+
+              {apiLoading && (
+                <div className="py-2 flex items-center justify-center gap-2 text-[10px] text-[#4a5d4e] bg-white/50 rounded-xl border border-dashed border-[#4a5d4e]/20">
+                  <div className="w-3.5 h-3.5 border-2 border-[#4a5d4e] border-t-transparent rounded-full animate-spin"></div>
+                  <span>Memuat data dari Google Sheets...</span>
+                </div>
+              )}
+
+              {apiSuccessMessage && (
+                <div className="p-2.5 bg-green-50 text-green-800 text-[10px] rounded-xl border border-green-200 font-medium animate-fadeIn">
+                  {apiSuccessMessage}
+                </div>
+              )}
+
+              {apiError && (
+                <div className="p-2.5 bg-red-50 text-red-800 text-[10px] rounded-xl border border-red-200 animate-fadeIn">
+                  {apiError}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    await fetchWeddingData();
+                    await fetchRsvpsAndWishes();
+                  }}
+                  disabled={apiLoading}
+                  className="flex-1 py-2 bg-[#4a5d4e] hover:bg-[#3e4d41] disabled:opacity-50 text-white rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <Clock className={`w-3 h-3 ${apiLoading ? 'animate-spin' : ''}`} />
+                  {apiLoading ? 'Sinkron...' : 'Tarik Data'}
+                </button>
+
+                <button
+                  onClick={() => setIsGuideOpen(!isGuideOpen)}
+                  className="px-3 py-2 bg-[#c5a059]/10 hover:bg-[#c5a059]/20 text-[#c5a059] rounded-xl text-[10px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                  title="Lihat Panduan Integrasi Google Sheets"
+                >
+                  <FileText className="w-3 h-3" />
+                  <span>{isGuideOpen ? 'Tutup Kode' : 'Panduan'}</span>
+                </button>
+              </div>
+
+              {/* Expandable Apps Script Guide */}
+              {isGuideOpen && (
+                <div className="bg-white p-3.5 rounded-2xl border border-[#e5e1da] space-y-3 animate-slideDown">
+                  <div className="flex items-center justify-between border-b border-[#f4f1ea] pb-2">
+                    <span className="text-[9px] font-bold text-gray-700 uppercase">Kode Google Apps Script</span>
+                    <button
+                      onClick={() => {
+                        const code = `function doGet(e) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (!ss) {
+      return createJsonResponse({
+        "status": "error",
+        "message": "Script ini harus dibuat melalui menu 'Ekstensi > Apps Script' di dalam Google Sheets Anda agar saling terhubung."
+      });
+    }
+    
+    // Pastikan sheet RSVP_Tamu ada
+    var sheet = ss.getSheetByName("RSVP_Tamu");
+    if (!sheet) {
+      sheet = ss.insertSheet("RSVP_Tamu");
+      sheet.appendRow(["Tanggal Submit", "Nama Tamu", "Kehadiran", "Jumlah Tamu", "Ucapan & Doa"]);
+    }
+
+    // Jika ada parameter nama/kehadiran atau name/status, simpan RSVP
+    if (e && e.parameter && (e.parameter.nama || e.parameter.name || e.parameter.kehadiran || e.parameter.status)) {
+      return simpanRsvp(e.parameter);
+    }
+
+    // Jika tidak ada parameter rsvp, kembalikan daftar ucapan/RSVP dari Google Sheets
+    var data = [];
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    
+    if (lastRow > 1 && lastCol > 0) {
+      var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+      var rows = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+      
+      for (var r = 0; r < rows.length; r++) {
+        var rowData = {};
+        for (var c = 0; c < headers.length; c++) {
+          var headerName = headers[c] ? headers[c].toString().toLowerCase().trim() : ("column_" + c);
+          rowData[headerName] = rows[r][c];
+        }
+        data.push(rowData);
+      }
+    }
+
+    return createJsonResponse({
+      "status": "success",
+      "data": data
+    });
+    
+  } catch(err) {
+    return createJsonResponse({
+      "status": "error",
+      "message": "Terjadi kesalahan: " + err.toString()
+    });
+  }
+}
+
+function doPost(e) {
+  var params = {};
+  if (e && e.postData && e.postData.contents) {
+    try {
+      params = JSON.parse(e.postData.contents);
+    } catch(err) {
+      params = e.parameter;
+    }
+  } else if (e) {
+    params = e.parameter;
+  }
+  return simpanRsvp(params);
+}
+
+function simpanRsvp(p) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (!ss) {
+      throw new Error("Google Spreadsheet tidak aktif atau script dibuat sebagai standalone.");
+    }
+    
+    var sheet = ss.getSheetByName("RSVP_Tamu");
+    if (!sheet) {
+      sheet = ss.insertSheet("RSVP_Tamu");
+      sheet.appendRow(["Tanggal Submit", "Nama Tamu", "Kehadiran", "Jumlah Tamu", "Ucapan & Doa"]);
+    }
+    
+    var nama = p.nama || p.name || "Anonim";
+    var kehadiran = p.kehadiran || p.status || "Hadir";
+    var jumlahTamu = p.jumlah_tamu || p.guests || "1";
+    var ucapan = p.ucapan || p.message || "";
+    var timestamp = new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" });
+    
+    sheet.appendRow([timestamp, nama, kehadiran, jumlahTamu, ucapan]);
+    
+    return createJsonResponse({
+      "status": "success",
+      "message": "RSVP berhasil disimpan secara otomatis ke Google Sheets!"
+    });
+  } catch(err) {
+    return createJsonResponse({
+      "status": "error",
+      "message": "Gagal menyimpan ke Google Sheets: " + err.toString()
+    });
+  }
+}
+
+function createJsonResponse(data) {
+  return ContentService.createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+                        navigator.clipboard.writeText(code);
+                        setCopiedText(prev => ({ ...prev, appsscript: true }));
+                        setTimeout(() => setCopiedText(prev => ({ ...prev, appsscript: false })), 2000);
+                      }}
+                      className="px-2 py-1 bg-[#4a5d4e] text-white hover:bg-[#3e4d41] rounded-lg text-[8px] font-bold uppercase tracking-wider transition-all cursor-pointer"
+                    >
+                      {copiedText['appsscript'] ? 'Tersalin!' : 'Salin Kode'}
+                    </button>
+                  </div>
+                  
+                  <div className="text-[9px] text-gray-600 space-y-1.5 leading-relaxed">
+                    <p className="font-semibold text-gray-800">Langkah-langkah:</p>
+                    <ol className="list-decimal pl-3 space-y-1">
+                      <li>Buka Google Spreadsheet Anda.</li>
+                      <li>Pilih menu <strong className="text-gray-800">Ekstensi &gt; Apps Script</strong>.</li>
+                      <li>Hapus semua kode bawaan lalu paste kode yang disalin di atas.</li>
+                      <li>Klik ikon <strong className="text-gray-800">Simpan</strong> (floppy disk).</li>
+                      <li>Klik tombol <strong className="text-gray-800">Terapkan &gt; Penerapan Baru</strong>.</li>
+                      <li>Pilih jenis <strong className="text-gray-800">Aplikasi Web</strong>.</li>
+                      <li>Ubah akses ke <strong className="text-gray-800">"Siapa saja"</strong> (Anyone), lalu klik Terapkan.</li>
+                      <li>Salin URL Aplikasi Web yang diberikan ke kolom URL di atas!</li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Groom Details */}
             <div className="space-y-3 bg-[#fafafa] p-4 rounded-2xl border border-[#e5e1da]/60">
               <span className="text-[10px] uppercase tracking-widest font-bold text-[#c5a059] flex items-center gap-1.5">
@@ -784,7 +1262,17 @@ export default function App() {
                 ))}
               </div>
               <div>
-                <label className="block text-[10px] font-bold text-[#8a8a8a] uppercase mb-1">Atau URL MP3 Mandiri</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[10px] font-bold text-[#8a8a8a] uppercase">Atau URL MP3 Mandiri</label>
+                  <button
+                    type="button"
+                    onClick={() => setIsMusicGuideOpen(!isMusicGuideOpen)}
+                    className="text-[9px] text-[#c5a059] hover:underline font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <FileText className="w-3 h-3" />
+                    <span>{isMusicGuideOpen ? 'Sembunyikan Panduan' : 'Cara & Link Musik'}</span>
+                  </button>
+                </div>
                 <input 
                   type="text" 
                   placeholder="https://domain.com/music.mp3"
@@ -792,9 +1280,121 @@ export default function App() {
                   onChange={(e) => {
                     setCustomSongUrl(e.target.value);
                   }}
-                  className="w-full text-xs px-3 py-2 border border-[#e5e1da] rounded-xl focus:outline-none"
+                  className="w-full text-xs px-3 py-2 border border-[#e5e1da] rounded-xl focus:outline-none focus:ring-1 focus:ring-[#c5a059]"
                 />
               </div>
+
+              {/* Expandable Music Guide */}
+              {isMusicGuideOpen && (
+                <div className="bg-white p-3.5 rounded-2xl border border-[#e5e1da] space-y-3 animate-slideDown mt-2">
+                  <span className="text-[10px] uppercase tracking-widest font-bold text-[#4a5d4e] block border-b border-[#f4f1ea] pb-1.5">
+                    🎵 Panduan & Rekomendasi Link Musik
+                  </span>
+
+                  <div className="text-[9.5px] text-gray-600 space-y-2 leading-relaxed">
+                    <p>
+                      Untuk mengganti musik latar belakang undangan dengan lagu pilihan Anda sendiri, Anda membutuhkan sebuah <strong>Tautan MP3 Langsung (Direct Link)</strong>.
+                    </p>
+
+                    <div className="bg-[#4a5d4e]/5 p-2.5 rounded-xl border border-[#4a5d4e]/10 space-y-1">
+                      <p className="font-bold text-gray-800">💡 Cara Menggunakan Google Drive:</p>
+                      <ol className="list-decimal pl-3 space-y-0.5 text-[9px]">
+                        <li>Unggah file MP3 Anda ke Google Drive.</li>
+                        <li>Ubah setelan berbagi menjadi <strong>"Siapa saja yang memiliki link dapat melihat"</strong>.</li>
+                        <li>Salin link bagikannya, lalu ambil ID file uniknya (kode panjang di tengah link).</li>
+                        <li>Gunakan format tautan langsung ini:<br/>
+                          <code className="bg-white px-1 py-0.5 rounded border text-[8px] font-mono break-all inline-block mt-1">
+                            https://docs.google.com/uc?export=download&id=ID_FILE_ANDA
+                          </code>
+                        </li>
+                      </ol>
+                    </div>
+
+                    <div className="bg-[#4a5d4e]/5 p-2.5 rounded-xl border border-[#4a5d4e]/10 space-y-1">
+                      <p className="font-bold text-gray-800">💡 Cara Menggunakan Dropbox:</p>
+                      <ol className="list-decimal pl-3 space-y-0.5 text-[9px]">
+                        <li>Unggah file MP3 Anda ke Dropbox.</li>
+                        <li>Salin link bagikannya (contoh: <code className="text-[8px] font-mono">.../s/xyz/lagu.mp3?dl=0</code>).</li>
+                        <li>Ganti ujung tautan <code className="text-[8px] font-mono font-bold text-[#c5a059]">?dl=0</code> menjadi <code className="text-[8px] font-mono font-bold text-green-700">?dl=1</code> atau <code className="text-[8px] font-mono font-bold text-green-700">&raw=1</code>.</li>
+                        <li>Tempelkan link yang telah diubah tersebut ke kolom URL MP3 Mandiri di atas.</li>
+                      </ol>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <p className="font-bold text-gray-800">✨ Rekomendasi Link Musik Siap Pakai:</p>
+                      <div className="grid grid-cols-1 gap-1.5">
+                        <div className="flex items-center justify-between p-2 bg-[#fafafa] rounded-lg border border-[#e5e1da] text-[9px]">
+                          <div>
+                            <span className="font-bold block text-gray-700">Piano Klasik Romantis</span>
+                            <span className="text-[8px] text-gray-400 font-mono block truncate max-w-[150px]">SoundHelix Song 2</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomSongUrl('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3');
+                              setSongPresetKey('');
+                            }}
+                            className="px-2 py-1 bg-[#c5a059] text-white hover:bg-[#b08d4b] rounded-lg font-bold text-[8px] uppercase tracking-wider cursor-pointer"
+                          >
+                            Gunakan
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between p-2 bg-[#fafafa] rounded-lg border border-[#e5e1da] text-[9px]">
+                          <div>
+                            <span className="font-bold block text-gray-700">Gitar Akustik Menenangkan</span>
+                            <span className="text-[8px] text-gray-400 font-mono block truncate max-w-[150px]">SoundHelix Song 4</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomSongUrl('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3');
+                              setSongPresetKey('');
+                            }}
+                            className="px-2 py-1 bg-[#c5a059] text-white hover:bg-[#b08d4b] rounded-lg font-bold text-[8px] uppercase tracking-wider cursor-pointer"
+                          >
+                            Gunakan
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between p-2 bg-[#fafafa] rounded-lg border border-[#e5e1da] text-[9px]">
+                          <div>
+                            <span className="font-bold block text-gray-700">Biola Romantis & Syahdu</span>
+                            <span className="text-[8px] text-gray-400 font-mono block truncate max-w-[150px]">SoundHelix Song 8</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomSongUrl('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3');
+                              setSongPresetKey('');
+                            }}
+                            className="px-2 py-1 bg-[#c5a059] text-white hover:bg-[#b08d4b] rounded-lg font-bold text-[8px] uppercase tracking-wider cursor-pointer"
+                          >
+                            Gunakan
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between p-2 bg-[#fafafa] rounded-lg border border-[#e5e1da] text-[9px]">
+                          <div>
+                            <span className="font-bold block text-gray-700">Sinfoni Klasik Agung</span>
+                            <span className="text-[8px] text-gray-400 font-mono block truncate max-w-[150px]">SoundHelix Song 10</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomSongUrl('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3');
+                              setSongPresetKey('');
+                            }}
+                            className="px-2 py-1 bg-[#c5a059] text-white hover:bg-[#b08d4b] rounded-lg font-bold text-[8px] uppercase tracking-wider cursor-pointer"
+                          >
+                            Gunakan
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Kado Digital (Gifts Registry) */}
@@ -1092,6 +1692,9 @@ export default function App() {
                   <div className="p-4 bg-white/15 backdrop-blur-md rounded-2xl border border-white/10 text-center text-xs space-y-2 animate-fadeIn">
                     <Sparkles className="w-6 h-6 text-[#c5a059] mx-auto animate-bounce" />
                     <p className="font-semibold">{rsvpFeedback}</p>
+                    {rsvpSendError && (
+                      <p className="text-[10px] opacity-75 text-amber-200">{rsvpSendError}</p>
+                    )}
                   </div>
                 ) : (
                   <form onSubmit={handleFormSubmit} className="space-y-3.5 text-xs text-left">
@@ -1100,10 +1703,11 @@ export default function App() {
                       <input 
                         type="text" 
                         required
+                        disabled={rsvpSending}
                         placeholder="Nama Lengkap Anda"
                         value={formName}
                         onChange={(e) => setFormName(e.target.value)}
-                        className="w-full bg-white/10 border border-white/20 focus:border-[#c5a059] focus:outline-none rounded-xl px-3 py-2 text-white placeholder-white/50"
+                        className="w-full bg-white/10 border border-white/20 focus:border-[#c5a059] focus:outline-none rounded-xl px-3 py-2 text-white placeholder-white/50 disabled:opacity-50"
                       />
                     </div>
 
@@ -1112,8 +1716,9 @@ export default function App() {
                         <label className="block text-[10px] uppercase tracking-widest font-bold opacity-75 mb-1">Status Kehadiran</label>
                         <select 
                           value={formStatus}
+                          disabled={rsvpSending}
                           onChange={(e) => setFormStatus(e.target.value as any)}
-                          className="w-full bg-white/10 border border-white/20 focus:border-[#c5a059] focus:outline-none rounded-xl px-2 py-2 text-white [&>option]:text-[#2d2d2d]"
+                          className="w-full bg-white/10 border border-white/20 focus:border-[#c5a059] focus:outline-none rounded-xl px-2 py-2 text-white [&>option]:text-[#2d2d2d] disabled:opacity-50"
                         >
                           <option value="Hadir">Hadir</option>
                           <option value="Tidak Hadir">Tidak Hadir</option>
@@ -1126,9 +1731,10 @@ export default function App() {
                           type="number" 
                           min={1} 
                           max={10}
+                          disabled={rsvpSending}
                           value={formGuests}
                           onChange={(e) => setFormGuests(parseInt(e.target.value) || 1)}
-                          className="w-full bg-white/10 border border-white/20 focus:border-[#c5a059] focus:outline-none rounded-xl px-3 py-1.5 text-white"
+                          className="w-full bg-white/10 border border-white/20 focus:border-[#c5a059] focus:outline-none rounded-xl px-3 py-1.5 text-white disabled:opacity-50"
                         />
                       </div>
                     </div>
@@ -1137,18 +1743,31 @@ export default function App() {
                       <label className="block text-[10px] uppercase tracking-widest font-bold opacity-75 mb-1">Ucapan atau Doa Restu</label>
                       <textarea 
                         rows={2}
+                        disabled={rsvpSending}
                         placeholder="Tulis ucapan selamat Anda di sini..."
                         value={formMessage}
                         onChange={(e) => setFormMessage(e.target.value)}
-                        className="w-full bg-white/10 border border-white/20 focus:border-[#c5a059] focus:outline-none rounded-xl px-3 py-1.5 text-white placeholder-white/50 resize-none"
+                        className="w-full bg-white/10 border border-white/20 focus:border-[#c5a059] focus:outline-none rounded-xl px-3 py-1.5 text-white placeholder-white/50 resize-none disabled:opacity-50"
                       />
                     </div>
 
+                    {rsvpSendError && (
+                      <p className="text-[10px] text-red-200 bg-red-900/40 p-2 rounded-lg border border-red-500/20">{rsvpSendError}</p>
+                    )}
+
                     <button 
                       type="submit"
-                      className="w-full bg-white hover:bg-[#f4f1ea] active:scale-95 text-[#4a5d4e] font-bold py-3 rounded-xl uppercase tracking-widest text-[10px] transition-all shadow-md cursor-pointer"
+                      disabled={rsvpSending}
+                      className="w-full bg-white hover:bg-[#f4f1ea] active:scale-95 disabled:opacity-75 text-[#4a5d4e] font-bold py-3 rounded-xl uppercase tracking-widest text-[10px] transition-all shadow-md cursor-pointer flex items-center justify-center gap-2"
                     >
-                      Kirim RSVP & Ucapan
+                      {rsvpSending ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-[#4a5d4e] border-t-transparent rounded-full animate-spin"></div>
+                          <span>Mengirim RSVP...</span>
+                        </>
+                      ) : (
+                        <span>Kirim RSVP & Ucapan</span>
+                      )}
                     </button>
                   </form>
                 )}
